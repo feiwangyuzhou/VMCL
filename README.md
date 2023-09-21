@@ -1,6 +1,6 @@
 # VMCL
 
-This repository contains the data and code for the paper:
+This repository contains the data and code for the paper (Findings of ACL2023):
 ```Contrastive Learning with Generated Representations for Inductive Knowledge Graph Embedding```
 
 ## Dataset
