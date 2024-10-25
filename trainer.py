@@ -8,7 +8,7 @@ import torch.nn as nn
 from collections import defaultdict as ddict
 import numpy as np
 from torch.autograd import Variable
-from VAE import VAE, GVAE, another_GVAE
+from VAE import VAE
 import os
 import pdb
 
@@ -20,14 +20,40 @@ class Trainer(nn.Module):
         self.ent_init = EntInit(args).to(args.gpu)
         self.rgcn = RGCN(args).to(args.gpu)
         self.kge_model = KGEModel(args).to(args.gpu)
-        self.vae = another_GVAE(args, args.ent_dim, args.vae_hidden_dims).to(args.gpu)
+        self.vae = VAE(args.ent_dim, args.ent_dim, args.vae_hidden_dims).to(args.gpu)
         self.multi_type_loss = MultiLossLayer(6).to(args.gpu)
         # self.multi_kg_loss = MultiLossLayer(args.metatrain_bs).to(args.gpu)
 
         self.loss_fct = torch.nn.CrossEntropyLoss()
 
-    def get_loss_cle(self, tri, neg_tail_ent, neg_head_ent, neg_rel, ent_emb):
+    def get_loss_finetune(self, tri, neg_tail_ent, neg_head_ent, neg_rel, ent_emb):
         # pdb.set_trace()
+
+        neg_tail_score = self.kge_model((tri, neg_tail_ent), ent_emb, mode='tail-batch')
+        neg_head_score = self.kge_model((tri, neg_head_ent), ent_emb, mode='head-batch')
+        # neg_rel_score = self.kge_model((tri, neg_rel), ent_emb, mode='rel-batch')
+        pos_score = self.kge_model(tri, ent_emb)
+
+        temp = 0.05
+        score = torch.cat([pos_score/temp, neg_tail_score/temp, neg_head_score/temp], dim=1)
+        labels = torch.zeros(score.size(0)).long().cuda()
+        loss_cl = self.loss_fct(score, labels)
+
+        neg_score = torch.cat([neg_tail_score, neg_head_score])
+        neg_score = (F.softmax(neg_score * self.args.adv_temp, dim=1).detach()
+                     * F.logsigmoid(-neg_score)).sum(dim=1)
+        pos_score = F.logsigmoid(pos_score).squeeze(dim=1)
+        positive_sample_loss = - pos_score.mean()
+        negative_sample_loss = - neg_score.mean()
+
+        # pdb.set_trace()
+        loss = (positive_sample_loss + negative_sample_loss) / 2
+
+        return loss, loss_cl
+
+    def get_loss(self, tri, neg_tail_ent, neg_head_ent, neg_rel, ent_emb):
+        # pdb.set_trace()
+
         neg_tail_score = self.kge_model((tri, neg_tail_ent), ent_emb, mode='tail-batch')
         neg_head_score = self.kge_model((tri, neg_head_ent), ent_emb, mode='head-batch')
         neg_rel_score = self.kge_model((tri, neg_rel), ent_emb, mode='rel-batch')
@@ -37,9 +63,20 @@ class Trainer(nn.Module):
         score = torch.cat([pos_score/temp, neg_tail_score/temp, neg_head_score/temp, neg_rel_score/temp], dim=1)
         labels = torch.zeros(score.size(0)).long().cuda()
         loss_cl = self.loss_fct(score, labels)
-        return loss_cl
 
-    def get_loss_clm(self, sup_tri, ent_emb, ent_emb_vae, sup_tri_self_last_list, ent_emb_last_list):
+        neg_score = torch.cat([neg_tail_score, neg_head_score])
+        neg_score = (F.softmax(neg_score * self.args.adv_temp, dim=1).detach()
+                     * F.logsigmoid(-neg_score)).sum(dim=1)
+        pos_score = F.logsigmoid(pos_score).squeeze(dim=1)
+        positive_sample_loss = - pos_score.mean()
+        negative_sample_loss = - neg_score.mean()
+
+        # pdb.set_trace()
+        loss_link = (positive_sample_loss + negative_sample_loss) / 2
+
+        return loss_link, loss_cl
+
+    def get_loss_graph(self, sup_tri, ent_emb, ent_emb_vae, sup_tri_self_last_list, ent_emb_last_list):
         # pdb.set_trace()
         temp = 0.05
         neg_tail_score_list = []
@@ -57,35 +94,23 @@ class Trainer(nn.Module):
         score = torch.cat(all_score, dim=1)
         labels = torch.zeros(score.size(0)).long().cuda()
         loss_cl = self.loss_fct(score, labels)
-        return loss_cl
 
-    def get_loss_task(self, tri, neg_tail_ent, neg_head_ent, ent_emb):
         # pdb.set_trace()
-        neg_tail_score = self.kge_model((tri, neg_tail_ent), ent_emb, mode='tail-batch')
-        neg_head_score = self.kge_model((tri, neg_head_ent), ent_emb, mode='head-batch')
-        pos_score = self.kge_model(tri, ent_emb)
-
-        neg_score = torch.cat([neg_tail_score, neg_head_score])
+        neg_score = torch.cat(neg_tail_score_list, dim=1)
         neg_score = (F.softmax(neg_score * self.args.adv_temp, dim=1).detach()
                      * F.logsigmoid(-neg_score)).sum(dim=1)
         pos_score = F.logsigmoid(pos_score).squeeze(dim=1)
         positive_sample_loss = - pos_score.mean()
         negative_sample_loss = - neg_score.mean()
-
-        # pdb.set_trace()
         loss_link = (positive_sample_loss + negative_sample_loss) / 2
-
-        return loss_link
-
+        return loss_link, loss_cl
 
     def get_ent_emb(self, sup_g_bidir):
         # pdb.set_trace()
         self.ent_init(sup_g_bidir)
-        # ent_emb = self.rgcn(sup_g_bidir)
-        ent_emb, ent_emb_vae, mu, log_var = self.vae(sup_g_bidir)
-        loss_vae = self.vae.vae_loss_function(ent_emb_vae, ent_emb, mu, log_var)
+        ent_emb = self.rgcn(sup_g_bidir)
 
-        return ent_emb, ent_emb_vae, loss_vae
+        return ent_emb
 
     def evaluate(self, ent_emb, eval_dataloader, num_cand='all'):
         results = ddict(float)

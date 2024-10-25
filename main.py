@@ -2,6 +2,7 @@ import argparse
 from utils import init_dir, set_seed, get_num_rel
 from meta_trainer import MetaTrainer
 from post_trainer import PostTrainer
+from test_trainer import TestTrainer
 import os
 from subgraph import gen_subgraph_datasets
 from pre_process import data2pkl
@@ -15,7 +16,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--name', default='fb237_v1_transe', type=str)
 
-    parser.add_argument('--step', default='meta_train', type=str, choices=['meta_train', 'fine_tune'])
+    parser.add_argument('--step', default='meta_train', type=str, choices=['meta_train', 'fine_tune', 'test'])
     parser.add_argument('--metatrain_state', default='./state/fb237_v1_transe/fb237_v1_transe.best', type=str)
 
     parser.add_argument('--state_dir', '-state_dir', default='./state', type=str)
@@ -23,8 +24,8 @@ if __name__ == '__main__':
     parser.add_argument('--tb_log_dir', '-tb_log_dir', default='./tb_log', type=str)
 
     # params for subgraph
-    parser.add_argument('--num_train_subgraph', default=10000)
-    parser.add_argument('--num_valid_subgraph', default=200)
+    parser.add_argument('--num_train_subgraph', default=10000, type=int)
+    parser.add_argument('--num_valid_subgraph', default=200, type=int)
     parser.add_argument('--num_sample_for_estimate_size', default=50)
     parser.add_argument('--rw_0', default=10, type=int)
     parser.add_argument('--rw_1', default=10, type=int)
@@ -34,7 +35,7 @@ if __name__ == '__main__':
     # params for meta-train
     parser.add_argument('--metatrain_num_neg', default=32)
     parser.add_argument('--metatrain_num_epoch', default=10)
-    parser.add_argument('--metatrain_bs', default=16, type=int) #64
+    parser.add_argument('--metatrain_bs', default=64, type=int) #64
     parser.add_argument('--metatrain_lr', default=0.01, type=float)
     parser.add_argument('--metatrain_check_per_step', default=10, type=int)
     parser.add_argument('--indtest_eval_bs', default=512, type=int)
@@ -60,7 +61,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', default=1234, type=int)
 
     # for vae
-    parser.add_argument('--vae_hidden_dims', default=128, type=int)
+    parser.add_argument('--vae_hidden_dims', default=100, type=int)
 
     parser.add_argument('--num_sample', default=4, type=int)
 
@@ -92,12 +93,15 @@ if __name__ == '__main__':
 
     args.num_rel = get_num_rel(args)
 
-    # pdb.set_trace()
+
     if args.step == 'meta_train':
         meta_trainer = MetaTrainer(args, generator)
         meta_trainer.train()
     elif args.step == 'fine_tune':
         post_trainer = PostTrainer(args)
         post_trainer.train()
+    elif args.step == 'test':
+        test_trainer = TestTrainer(args)
+        test_trainer.train()
 
 

@@ -52,7 +52,6 @@ class MetaTrainer(nn.Module):
         # optim
         self.optimizer = optim.Adam(self.net.parameters(), lr=self.args.metatrain_lr)
         # self.optimizer = torch.optim.SGD(self.net.parameters(), lr=self.args.metatrain_lr)
-        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.9, patience=10)
 
     def load_pretrain(self):
         state = torch.load(self.args.pretrain_state, map_location=self.args.gpu)
@@ -66,23 +65,6 @@ class MetaTrainer(nn.Module):
         if state is not None:
             optimizer.load_state_dict(state)
         return optimizer
-
-    def get_metaKGs(self, batch, sup_g_list):
-        sup_tri_self_last_list = []
-        ent_emb_last_list = []
-        # pdb.set_trace()
-        for i in range(len(batch)):
-            ent_emb_last = sup_g_list[len(batch)-i-1].ndata['h']
-            ent_emb_last_vae = sup_g_list[len(batch)-i-1].ndata['g']
-            ent_emb_last_list.insert(0, ent_emb_last_vae)
-            ent_emb_last_list.insert(0, ent_emb_last)
-            _, _, _, _, sup_tri_self_last = [d.to(self.args.gpu) for d in batch[len(batch)-i-1][:5]]
-            sup_tri_self_last_list.insert(0, sup_tri_self_last)
-            sup_tri_self_last_list.insert(0, sup_tri_self_last)
-            if len(sup_tri_self_last_list) >= self.args.num_sample * 2:
-                break
-        # pdb.set_trace()
-        return sup_tri_self_last_list, ent_emb_last_list
 
     def train(self):
         step = 0
@@ -103,34 +85,60 @@ class MetaTrainer(nn.Module):
 
                 batch_loss = []
                 batch_sup_g = dgl.batch([get_g_bidir(d[0], self.args) for d in batch]).to(self.args.gpu)
-                _, _, loss_vae = self.net.get_ent_emb(batch_sup_g)
+                self.net.get_ent_emb(batch_sup_g)
                 sup_g_list = dgl.unbatch(batch_sup_g)
 
                 # pdb.set_trace()
-                sup_tri_self_last_list, ent_emb_last_list = self.get_metaKGs(batch, sup_g_list)
-
+                sup_tri_self_last_list = []
+                ent_emb_last_list = []
+                ent_emb_last = sup_g_list[len(batch)-1].ndata['h']
+                ent_emb_last_vae, _, _ = self.net.vae(ent_emb_last)
+                ent_emb_last_list.append(ent_emb_last)
+                ent_emb_last_list.append(ent_emb_last_vae)
+                _, _, _, _, sup_tri_self_last = [d.to(self.args.gpu) for d in batch[-1][:5]]
+                sup_tri_self_last_list.append(sup_tri_self_last)
+                sup_tri_self_last_list.append(sup_tri_self_last)
                 for batch_i, data in enumerate(batch):
                     # pdb.set_trace()
                     akg_loss = 0
                     ent_emb = sup_g_list[batch_i].ndata['h']
-                    ent_emb_vae = sup_g_list[batch_i].ndata['g']
+                    ent_emb_vae, mu, log_var = self.net.vae(ent_emb)
+                    # ent_emb = torch.cat((ent_emb_ori,ent_emb_ori),1)
+                    loss_vae = self.net.vae.vae_loss_function(ent_emb_vae, ent_emb, mu, log_var)
+                    # akg_loss.append(loss_vae)
+                    akg_loss = akg_loss + loss_vae*0.001
+                    # print("*************************")
+                    # print(loss_vae)
 
                     # within
                     # pdb.set_trace()
                     que_tri, que_neg_tail_ent, que_neg_head_ent, que_neg_rel = [d.to(self.args.gpu) for d in data[5:]]
+                    loss_link_que, loss_cl_que = self.net.get_loss(que_tri, que_neg_tail_ent, que_neg_head_ent, que_neg_rel, ent_emb+ent_emb_vae)
+                    # akg_loss.append(loss_link_que)
+                    # akg_loss.append(loss_cl_que)
+                    akg_loss = akg_loss + loss_link_que
+                    akg_loss = akg_loss + loss_cl_que*0.001
+                    # print(loss_link_que)
+                    # print(loss_cl_que)
                     sup_tri, sup_neg_tail_ent, sup_neg_head_ent, sup_neg_rel, sup_tri_self = [d.to(self.args.gpu) for d in data[:5]]
-                    loss_cle_que = self.net.get_loss_cle(que_tri, que_neg_tail_ent, que_neg_head_ent, que_neg_rel, ent_emb+ent_emb_vae)
-                    loss_cle_sup = self.net.get_loss_cle(sup_tri, sup_neg_tail_ent, sup_neg_head_ent, sup_neg_rel, ent_emb+ent_emb_vae)
-                    akg_loss = akg_loss + loss_cle_que * 0.001 + loss_cle_sup * 0.001
-                    # akg_loss = akg_loss + loss_cle_que + loss_cle_sup
-
-                    loss_task_que = self.net.get_loss_task(que_tri, que_neg_tail_ent, que_neg_head_ent, ent_emb + ent_emb_vae)
-                    loss_task_sup = self.net.get_loss_task(sup_tri, sup_neg_tail_ent, sup_neg_head_ent, ent_emb + ent_emb_vae)
-                    akg_loss = akg_loss + loss_task_que + loss_task_sup
+                    loss_link_sup, loss_cl_sup = self.net.get_loss(sup_tri, sup_neg_tail_ent, sup_neg_head_ent, sup_neg_rel, ent_emb+ent_emb_vae)
+                    # akg_loss.append(loss_link_sup)
+                    # akg_loss.append(loss_cl_sup)
+                    akg_loss = akg_loss + loss_link_sup
+                    akg_loss = akg_loss + loss_cl_sup * 0.001
+                    # print(loss_link_sup)
+                    # print(loss_cl_sup)
 
                     # between meta-KGs
-                    loss_clm = self.net.get_loss_clm(sup_tri_self, ent_emb, ent_emb_vae, sup_tri_self_last_list, ent_emb_last_list)
-                    akg_loss = akg_loss + loss_clm * 0.001
+                    loss_link_graph, loss_cl_graph = self.net.get_loss_graph(sup_tri_self, ent_emb, ent_emb_vae, sup_tri_self_last_list, ent_emb_last_list)
+                    # akg_loss.append(loss_link_graph)
+                    # akg_loss.append(loss_cl_graph)
+                    # akg_loss = akg_loss + loss_link_graph
+                    akg_loss = akg_loss + loss_cl_graph * 0.001
+                    # print(loss_link_graph)
+                    # print(loss_cl_graph)
+                    # print("===================")
+                    # pdb.set_trace()
                     if len(sup_tri_self_last_list) >= self.args.num_sample*2:
                         # pdb.set_trace()
                         sup_tri_self_last_list=sup_tri_self_last_list[2:]
@@ -140,13 +148,16 @@ class MetaTrainer(nn.Module):
                     ent_emb_last_list.append(ent_emb)
                     ent_emb_last_list.append(ent_emb_vae)
 
+                    # pdb.set_trace()
+                    # akg_loss = torch.stack(akg_loss)
+                    # akg_loss = self.net.multi_type_loss.get_loss(akg_loss)
                     batch_loss.append(akg_loss)
 
                 # pdb.set_trace()
                 # batch_loss /= len(batch)
                 self.optimizer.zero_grad()
                 # final_loss = self.net.multi_kg_loss.get_loss(torch.stack(batch_loss))
-                final_loss = sum(batch_loss) / len(batch) + loss_vae * 0.001
+                final_loss = sum(batch_loss) / len(batch)
                 final_loss.backward()
                 self.optimizer.step()
 
@@ -230,9 +241,8 @@ class MetaTrainer(nn.Module):
             for batch_i, data in enumerate(batch):
                 que_dataloader = data[1]
                 ent_emb = sup_g_list[batch_i].ndata['h']
-                ent_emb_vae = sup_g_list[batch_i].ndata['g']
 
-                # ent_emb_vae, mu, log_var = self.net.vae(ent_emb)
+                ent_emb_vae, mu, log_var = self.net.vae(ent_emb)
 
                 results = self.net.evaluate(ent_emb+ent_emb_vae, que_dataloader)
 
@@ -283,9 +293,9 @@ class MetaTrainer(nn.Module):
 
     def evaluate_indtest_test_triples(self, num_cand='all'):
         """do evaluation on test triples of ind-test-graph"""
-        ent_emb, ent_emb_vae, _ = self.net.get_ent_emb(self.indtest_train_g)
+        ent_emb = self.net.get_ent_emb(self.indtest_train_g)
 
-        # ent_emb_vae, mu, log_var = self.net.vae(ent_emb)
+        ent_emb_vae, mu, log_var = self.net.vae(ent_emb)
 
         results = self.net.evaluate(ent_emb+ent_emb_vae, self.indtest_test_dataloader, num_cand=num_cand)
 

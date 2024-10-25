@@ -98,11 +98,11 @@ class RGCNLayer(nn.Module):
 
         g.update_all(self.msg_func, self.aggregator, self.apply_node_func)
 
-        # todo cat or not
-        # if self.is_input_layer:
-        #     g.ndata['repr'] = torch.cat([g.ndata['feat'], g.ndata['h']], dim=1)
-        # else:
-        #     g.ndata['repr'] = torch.cat([g.ndata['repr'], g.ndata['h']], dim=1)
+
+        if self.is_input_layer:
+            g.ndata['repr'] = torch.cat([g.ndata['feat'], g.ndata['h']], dim=1)
+        else:
+            g.ndata['repr'] = torch.cat([g.ndata['repr'], g.ndata['h']], dim=1)
 
 
 class RGCN(nn.Module):

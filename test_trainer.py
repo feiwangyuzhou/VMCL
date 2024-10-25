@@ -13,9 +13,9 @@ import json
 import pdb
 
 
-class PostTrainer(nn.Module):
+class TestTrainer(nn.Module):
     def __init__(self, args):
-        super(PostTrainer, self).__init__()
+        super(TestTrainer, self).__init__()
         self.args = args
         # dataloader
         train_dataset, valid_dataset = get_posttrain_train_valid_dataset(args)
@@ -43,7 +43,7 @@ class PostTrainer(nn.Module):
         self.net = Trainer(args)
         self.optimizer = optim.Adam(self.net.parameters(), lr=self.args.posttrain_lr)
 
-        self.load_metatrain()
+        # self.load_metatrain()
 
     def load_metatrain(self):
         state = torch.load(self.args.metatrain_state, map_location=self.args.gpu)
@@ -59,81 +59,11 @@ class PostTrainer(nn.Module):
         return ent_emb
 
     def train(self):
-        self.logger.info('start fine-tuning')
-
-        # print epoch test rst
-        # self.evaluate_indtest_test_triples(num_cand=50)
-
-        # self.net.eval()
-        eval_res = self.evaluate_indtest_valid_triples()
-        self.write_evaluation_result(eval_res, 0)
-
-        best_step = 0
-        best_eval_rst = eval_res
-        self.save_checkpoint(0)
-        bad_count = 0
-
-        for i in range(1, self.args.posttrain_num_epoch + 1):
-            losses = []
-            # pdb.set_trace()
-            self.net.train()
-            for batch in self.train_dataloader:
-
-                pos_triple, neg_tail_ent, neg_head_ent, neg_rel = [b.to(self.args.gpu) for b in batch]
-                # pdb.set_trace()
-                ent_emb = self.get_ent_emb(self.indtest_train_g)
-                ent_emb_vae, mu, log_var = self.net.vae(ent_emb)
-                loss_vae = self.net.vae.vae_loss_function(ent_emb_vae, ent_emb, mu, log_var)
-
-                loss_sup, loss_sup_cl = self.net.get_loss_finetune(pos_triple, neg_tail_ent, neg_head_ent, neg_rel, ent_emb+ent_emb_vae)
-
-                # pdb.set_trace()
-                # loss = loss_sup + loss_vae*0.001 + loss_sup_cl * 0.001
-                # loss = loss_sup + loss_vae * 0.001
-                loss = loss_sup
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-
-                losses.append(loss.item())
-
-            self.logger.info('epoch: {} | loss: {:.4f}'.format(i, np.mean(losses)))
-
-            # if i % self.args.posttrain_check_per_epoch == 0:
-            #     self.evaluate_indtest_test_triples(num_cand=50, epoch=i)
-            if i % self.args.posttrain_check_per_epoch == 0:
-                # self.net.eval()
-                eval_res = self.evaluate_indtest_valid_triples()
-                self.write_evaluation_result(eval_res, i)
-
-                if eval_res['mrr'] > best_eval_rst['mrr']:
-                    bad_count = 0
-                # elif (eval_res['hits@1'] == best_eval_rst['hits@1']) and (eval_res['hits@10'] > best_eval_rst['hits@10']):
-                #     bad_count = 0
-                else:
-                    bad_count += 1
-
-                if bad_count == 0:
-                    best_eval_rst = eval_res
-                    best_step = i
-                    self.logger.info('best model | mrr {:.4f}'.format(best_eval_rst['mrr']))
-                    self.save_checkpoint(i)
-                else:
-                    self.logger.info('best model is at step {0}, mrr {1:.4f}, bad count {2}'.format(
-                        best_step, best_eval_rst['mrr'], bad_count))
-
-        self.logger.info('finish meta-training')
-        self.logger.info('save best model')
-        self.save_model(best_step)
-
-        self.logger.info('best validation | mrr: {:.4f}, hits@1: {:.4f}, hits@5: {:.4f}, hits@10: {:.4f}'.format(
-            best_eval_rst['mrr'], best_eval_rst['hits@1'],
-            best_eval_rst['hits@5'], best_eval_rst['hits@10']))
+        self.logger.info('prediction')
 
         self.before_test_load()
 
-        self.evaluate_indtest_test_triples(num_cand=50, epoch=best_step)
+        self.evaluate_indtest_test_triples(num_cand=50)
 
     def write_evaluation_result(self, results, e):
         self.writer.add_scalar("evaluation/mrr", results['mrr'], e)
