@@ -14,12 +14,12 @@ Each group of inductive KGs include a source KG and a target KG, e.g., F1 is the
 ## Code
 #### Pretrain
 ```bash
-bash script/metatrain.sh
+bash script/metatrain_rotate.sh
 ```
 #### Finetune
 
 ```bash
-bash script/finetune.sh
+bash script/finetune_rotate.sh
 ```
 You can change ```dataset='N'``` and ```version=1``` to choose a dataset, 
 and change ```kge='TransE' ``` to choose a KGE model.
